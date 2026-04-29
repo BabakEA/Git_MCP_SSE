@@ -1,0 +1,19 @@
+{
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "github_token",
+      "description": "GitHub token for the local MCP HTTP server on port 9090",
+      "password": true
+    }
+  ],
+  "servers": {
+    "github-local-http": {
+      "type": "http",
+      "url": "http://127.0.0.1:9090",
+      "headers": {
+        "Authorization": "Bearer ${input:github_token}"
+      }
+    }
+  }
+}
