@@ -1,19 +1,23 @@
 {
-  "inputs": [
-    {
-      "type": "promptString",
-      "id": "github_token",
-      "description": "GitHub token for the local MCP HTTP server on port 9090",
-      "password": true
-    }
-  ],
-  "servers": {
-    "github-local-http": {
-      "type": "http",
-      "url": "http://127.0.0.1:9090",
-      "headers": {
-        "Authorization": "Bearer ${input:github_token}"
-      }
-    }
-  }
+	"servers": {
+		"github-local-http": {
+			"type": "http",
+			"url": "http://127.0.0.1:9090",
+			"headers": {
+				"Authorization": "Bearer ${TOKEN}"
+			}
+		},
+		"my-mcp-server-4131c1d9": {
+			"url": "http://localhost:9090",
+			"type": "http"
+		}
+	},
+	"inputs": [
+		{
+			"type": "promptString",
+			"id": "TOKEN",
+			"description": "GitHub token for the local MCP HTTP server on port 9090",
+			"password": true
+		}
+	]
 }
