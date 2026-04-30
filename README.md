@@ -1,25 +1,68 @@
-# GitHub MCP Bridge
+# GitHub MCP Workspace
 
-This workspace runs the official GitHub MCP server from the attached `github-mcp-server` repository as a local HTTP MCP endpoint on port `9090`.
+Written by `Babak EA`
 
-## How It Works
+This repository is a working integration workspace around the official GitHub MCP server, plus a modern LangGraph-based chat agent and a Streamlit web UI.
 
-The runtime model is simple:
+It gives you three main things:
 
-1. Docker builds the official Go server from `github-mcp-server/`.
-2. The container starts `github-mcp-server http --port 9090`.
-3. Your agent connects to `http://127.0.0.1:9090` as an MCP `http` server.
-4. The agent sends MCP JSON-RPC requests such as `initialize`, `tools/list`, and `tools/call`.
-5. Authentication is provided by the MCP client per request using `Authorization: Bearer <token>`.
-6. For GitHub Enterprise, `docker-entrypoint.sh` maps legacy `GITHUB_API_URL=https://host/api/v3` to the upstream server's `GITHUB_HOST=https://host`.
+1. A local or containerized GitHub MCP HTTP server on port `9090`
+2. A LangGraph repository expert agent that can inspect repositories through MCP
+3. A ChatGPT-style Streamlit UI with agent modes, progress streaming, report generation, and optional login protection
 
-This means the container is only responsible for serving the MCP endpoint. It does not keep a GitHub token internally for all users. Each connecting agent supplies its own token, which is the safer model for shared use.
+## What This Repository Can Do
 
-## Why The Old Python Files Were Removed
+- Run the official GitHub MCP server over HTTP
+- Let agents call GitHub tools through MCP JSON-RPC
+- Support GitHub Enterprise through environment configuration
+- Parse repository URLs from either `github.com` or an enterprise Git web host
+- Use a read-only repository expert agent for repository Q and A
+- Generate deep repository reports in `md`, `text`, or `json`
+- Expose a browser chat UI for repository analysis
+- Support multiple agent modes such as:
+  - `Chat`
+  - `Deep Repo Report`
+  - `Code Search Expert`
+  - `Issue and PR Analyst`
+- Stream live agent progress in the UI while MCP tools and LLM calls run
+- Optionally protect the UI with app-level login using `UI_USERNAME` and `UI_PASSWORD`
 
-The original root Python files implemented a custom stdio bridge based on an outdated assumption that the upstream server only supported stdio. The attached upstream repository already supports streamable HTTP, so those files were redundant and would have created a second, less reliable protocol layer.
+## Repository Layout
 
-## Run The Server
+- `github-mcp-server/`: upstream GitHub MCP server source used for reference and exploration
+- `git-mcp-bridge/`: the clean wrapper project intended for publishing or deployment
+- `examples/`: agent and UI examples used in the workspace root flow
+- `.vscode/mcp.json`: local MCP client configuration for IDE agent usage
+- `Dockerfile`, `docker-compose.yml`, `run.sh`: root-level server startup assets
+
+The most polished integration artifacts live under `git-mcp-bridge/`.
+
+## Core Architecture
+
+The runtime model is:
+
+1. Docker builds or runs the official GitHub MCP server
+2. The MCP server exposes HTTP on `http://127.0.0.1:9090`
+3. The LangGraph agent connects to that MCP endpoint and sends `initialize` and `tools/call`
+4. The Streamlit UI sends user requests into the LangGraph runtime
+5. The LiteLLM endpoint is used for planning, answers, and report generation
+6. Bearer authentication is sent by the agent client on every MCP request
+
+This is intentionally safer than storing one shared Git token inside the server for every user.
+
+## Main Features In The Agent Layer
+
+- Read-only GitHub repository analysis over MCP
+- Enterprise-aware repository URL parsing with `GIT_WEB_BASE_URL`
+- Tool planning through LiteLLM
+- Structured progress events for UI streaming
+- Report persistence under `examples/reports/`
+- Report output formats:
+  - markdown
+  - plain text
+  - JSON
+
+## Run The MCP Server
 
 ### Docker Compose
 
@@ -40,72 +83,102 @@ docker run --rm -p 9090:9090 --env-file .env git-mcp-bridge:latest
 curl http://127.0.0.1:9090/.well-known/oauth-protected-resource
 ```
 
-## Connect From Agent Mode
+## Run The Chat UI
 
-The workspace already includes `.vscode/mcp.json` for local agent use.
+The preferred launcher is inside `git-mcp-bridge/`:
 
-It points to:
-
-```json
-{
-  "servers": {
-    "github-local-http": {
-      "type": "http",
-      "url": "http://127.0.0.1:9090",
-      "headers": {
-        "Authorization": "Bearer ${input:github_token}"
-      }
-    }
-  }
-}
+```bash
+cd git-mcp-bridge
+./run_ui.sh
 ```
 
-When the IDE prompts for the token, provide a PAT or enterprise token with repository read access.
+That starts the Streamlit UI, usually at:
 
-## Simple Python Agent Example
+```text
+http://127.0.0.1:8501
+```
 
-See `examples/simple_repo_reader_agent.py`.
+## Smoke Testing
 
-It does three things:
+There is a dedicated smoke test script in `git-mcp-bridge/`:
 
-1. Sends `initialize` to the local MCP HTTP endpoint.
-2. Calls the `get_file_contents` tool.
-3. Prints the returned file or directory content.
+```bash
+cd git-mcp-bridge
+./smoke_test.sh
+```
 
-Example:
+It checks:
+
+- shell script syntax
+- Python syntax
+- Python imports
+- Docker Compose rendering
+- temporary Streamlit startup and health response
+
+## Enterprise Configuration
+
+For GitHub Enterprise or any private Git host, there are two separate concerns:
+
+### MCP Server API Host
+
+Use one of these:
+
+```env
+GITHUB_HOST=https://ghe.example.com
+```
+
+or legacy:
+
+```env
+GITHUB_API_URL=https://ghe.example.com/api/v3
+```
+
+### Agent Repository URL Parsing
+
+Use:
+
+```env
+GIT_WEB_BASE_URL=https://ghe.example.com
+```
+
+This is what lets enterprise users paste internal repository links without changing the code.
+
+## Authentication Model
+
+- The MCP client sends `Authorization: Bearer <token>` on every MCP HTTP request
+- That includes `initialize` and each `tools/call`
+- The agent does not create a separate Git session token
+- Effective token lifetime is the lifetime of the bearer token the user provides
+- The optional Streamlit login is separate and only protects the web UI
+
+## IDE Connection
+
+The workspace includes `.vscode/mcp.json` for local agent use.
+
+The MCP server endpoint is:
+
+```text
+http://127.0.0.1:9090
+```
+
+When prompted, provide a GitHub or enterprise bearer token with the repository access you need.
+
+## Examples
+
+Simple Python MCP client example:
 
 ```bash
 python examples/simple_repo_reader_agent.py --owner github --repo github-mcp-server --path README.md --token YOUR_TOKEN
 ```
 
-Or with an environment variable:
+LangGraph and Streamlit examples live under:
 
-```bash
-export GITHUB_TOKEN=YOUR_TOKEN
-python examples/simple_repo_reader_agent.py --owner github --repo github-mcp-server --path README.md
+```text
+git-mcp-bridge/examples/
 ```
 
-## Enterprise Notes
+## Where To Look Next
 
-- Preferred GHES setting: `GITHUB_HOST=https://ghe.example.com`
-- Legacy compatibility: `GITHUB_API_URL=https://ghe.example.com/api/v3`
-- Optional restriction flags:
-  - `MCP_READ_ONLY=true`
-  - `MCP_SCOPE_CHALLENGE=true`
-  - `MCP_TOOLSETS=repos,issues`
-
-## Minimal Request Flow
-
-The example agent uses standard MCP JSON-RPC messages over HTTP:
-
-```json
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"simple-repo-reader","version":"1.0"}}}
-```
-
-Then:
-
-```json
-{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_file_contents","arguments":{"owner":"github","repo":"github-mcp-server","path":"README.md"}}}
-```
-
-The server responds with MCP tool output that the agent can render as plain text.
+- `git-mcp-bridge/README.md`: deployment-oriented wrapper documentation
+- `git-mcp-bridge/examples/README.md`: LangGraph agent and Streamlit UI details
+- `git-mcp-bridge/examples/agent_architecture.md`: Mermaid diagram and detailed agent flow
