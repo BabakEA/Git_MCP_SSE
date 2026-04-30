@@ -1,125 +1,111 @@
-# git-mcp-bridge
+# GitHub MCP Bridge
 
-This folder is the clean version you can push to your own GitHub repository.
+This workspace runs the official GitHub MCP server from the attached `github-mcp-server` repository as a local HTTP MCP endpoint on port `9090`.
 
-It contains only your integration layer and does not vendor the original `github-mcp-server` source tree. Instead, Docker fetches the upstream repository during the build.
+## How It Works
 
-## Included Files
+The runtime model is simple:
 
-- `Dockerfile`: builds the official GitHub MCP server from upstream and runs it on port `9090`
-- `docker-entrypoint.sh`: maps your local env vars to the upstream server flags
-- `docker-compose.yml`: local development runner
-- `.env.example`: example configuration
-- `.gitignore`: prevents `.env` and local cache files from being committed
-- `.vscode/mcp.json`: local MCP client configuration for agent mode
-- `examples/simple_repo_reader_agent.py`: minimal Python client that reads repository contents through MCP
+1. Docker builds the official Go server from `github-mcp-server/`.
+2. The container starts `github-mcp-server http --port 9090`.
+3. Your agent connects to `http://127.0.0.1:9090` as an MCP `http` server.
+4. The agent sends MCP JSON-RPC requests such as `initialize`, `tools/list`, and `tools/call`.
+5. Authentication is provided by the MCP client per request using `Authorization: Bearer <token>`.
+6. For GitHub Enterprise, `docker-entrypoint.sh` maps legacy `GITHUB_API_URL=https://host/api/v3` to the upstream server's `GITHUB_HOST=https://host`.
 
-## Run It
+This means the container is only responsible for serving the MCP endpoint. It does not keep a GitHub token internally for all users. Each connecting agent supplies its own token, which is the safer model for shared use.
 
-1. Copy `.env.example` to `.env`
-2. Start the server:
+## Why The Old Python Files Were Removed
+
+The original root Python files implemented a custom stdio bridge based on an outdated assumption that the upstream server only supported stdio. The attached upstream repository already supports streamable HTTP, so those files were redundant and would have created a second, less reliable protocol layer.
+
+## Run The Server
+
+### Docker Compose
 
 ```bash
 docker compose up --build
 ```
 
-3. Connect your MCP client or IDE to:
+### Docker Run
 
-```text
-http://127.0.0.1:9090
+```bash
+docker build -t git-mcp-bridge:latest .
+docker run --rm -p 9090:9090 --env-file .env git-mcp-bridge:latest
 ```
 
-4. Send a bearer token from the client side.
+### Health Check
 
-## How This Model Works
+```bash
+curl http://127.0.0.1:9090/.well-known/oauth-protected-resource
+```
 
-The server process is the official GitHub MCP server in HTTP mode.
+## Connect From Agent Mode
 
-Request flow:
+The workspace already includes `.vscode/mcp.json` for local agent use.
 
-1. Your agent sends `initialize` to `http://127.0.0.1:9090/`
-2. The agent then sends `tools/call`
-3. The GitHub MCP server executes the selected tool
-4. The result is returned as an MCP JSON-RPC response
-
-The sample agent uses `get_file_contents` with arguments like:
+It points to:
 
 ```json
 {
-  "owner": "github",
-  "repo": "github-mcp-server",
-  "path": "README.md"
+  "servers": {
+    "github-local-http": {
+      "type": "http",
+      "url": "http://127.0.0.1:9090",
+      "headers": {
+        "Authorization": "Bearer ${input:github_token}"
+      }
+    }
+  }
 }
 ```
 
-## GitHub Enterprise
+When the IDE prompts for the token, provide a PAT or enterprise token with repository read access.
 
-Preferred setting:
+## Simple Python Agent Example
 
-```env
-GITHUB_HOST=https://ghe.example.com
-```
+See `examples/simple_repo_reader_agent.py`.
 
-Legacy compatibility also works:
+It does three things:
 
-```env
-GITHUB_API_URL=https://ghe.example.com/api/v3
-```
+1. Sends `initialize` to the local MCP HTTP endpoint.
+2. Calls the `get_file_contents` tool.
+3. Prints the returned file or directory content.
 
-## How To Link Your Repo To The Original GitHub MCP Project
-
-You have three reasonable options.
-
-### Option 1: Build From Upstream At Docker Build Time
-
-This folder already does that.
-
-```env
-GITHUB_MCP_REPO=https://github.com/github/github-mcp-server.git
-GITHUB_MCP_REF=main
-```
-
-If you want to pin a version, set `GITHUB_MCP_REF` to a tag or commit-like branch reference.
-
-### Option 2: Add The Original Repo As A Git Submodule
-
-Use this if you want your repo to track upstream source explicitly:
-
-```bash
-git submodule add https://github.com/github/github-mcp-server.git vendor/github-mcp-server
-git commit -m "Add github-mcp-server submodule"
-```
-
-Then change the Dockerfile to copy `vendor/github-mcp-server/` instead of cloning during build.
-
-### Option 3: Fork The Original Repo And Add An Upstream Remote
-
-Use this only if you plan to modify the original MCP server code itself, not just wrap it.
-
-```bash
-git remote add upstream https://github.com/github/github-mcp-server.git
-git fetch upstream
-```
-
-That pattern is best when your repository is actually a fork of the original project.
-
-## Push To Your GitHub
-
-Inside `git-mcp-bridge/`:
-
-```bash
-git init
-git add .
-git commit -m "Initial git-mcp-bridge wrapper"
-git branch -M main
-git remote add origin https://github.com/YOUR_USER/YOUR_REPO.git
-git push -u origin main
-```
-
-## Example Agent
-
-Run the simple client like this:
+Example:
 
 ```bash
 python examples/simple_repo_reader_agent.py --owner github --repo github-mcp-server --path README.md --token YOUR_TOKEN
 ```
+
+Or with an environment variable:
+
+```bash
+export GITHUB_TOKEN=YOUR_TOKEN
+python examples/simple_repo_reader_agent.py --owner github --repo github-mcp-server --path README.md
+```
+
+## Enterprise Notes
+
+- Preferred GHES setting: `GITHUB_HOST=https://ghe.example.com`
+- Legacy compatibility: `GITHUB_API_URL=https://ghe.example.com/api/v3`
+- Optional restriction flags:
+  - `MCP_READ_ONLY=true`
+  - `MCP_SCOPE_CHALLENGE=true`
+  - `MCP_TOOLSETS=repos,issues`
+
+## Minimal Request Flow
+
+The example agent uses standard MCP JSON-RPC messages over HTTP:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"simple-repo-reader","version":"1.0"}}}
+```
+
+Then:
+
+```json
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_file_contents","arguments":{"owner":"github","repo":"github-mcp-server","path":"README.md"}}}
+```
+
+The server responds with MCP tool output that the agent can render as plain text.

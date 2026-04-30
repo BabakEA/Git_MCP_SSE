@@ -1,0 +1,53 @@
+services:
+  git-mcp-bridge:
+    container_name: git-mcp-bridge
+    build:
+      context: .
+      args:
+        GITHUB_MCP_REPO: ${GITHUB_MCP_REPO:-https://github.com/github/github-mcp-server.git}
+        GITHUB_MCP_REF: ${GITHUB_MCP_REF:-main}
+    env_file:
+      - .env
+    ports:
+      - "9090:9090"
+    environment:
+      - PORT=9090
+      - GITHUB_HOST=${GITHUB_HOST:-}
+      - GITHUB_API_URL=${GITHUB_API_URL:-}
+      - MCP_READ_ONLY=${MCP_READ_ONLY:-false}
+      - MCP_SCOPE_CHALLENGE=${MCP_SCOPE_CHALLENGE:-false}
+      - MCP_TOOLSETS=${MCP_TOOLSETS:-}
+      - MCP_TOOLS=${MCP_TOOLS:-}
+      - MCP_EXCLUDE_TOOLS=${MCP_EXCLUDE_TOOLS:-}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/.well-known/oauth-protected-resource"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  git-mcp-chat-ui:
+    container_name: git-mcp-chat-ui
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    depends_on:
+      git-mcp-bridge:
+        condition: service_healthy
+    env_file:
+      - .env
+    ports:
+      - "8501:8501"
+    environment:
+      - MCP_URL=${UI_MCP_URL:-http://git-mcp-bridge:9090}
+      - LITELLM_COMPLETE_URL=${LITELLM_COMPLETE_URL:-http://host.docker.internal:8000/complete}
+      - LITELLM_MODEL=${LITELLM_MODEL:-gpt-4.1}
+      - LITELLM_MAX_SECONDS=${LITELLM_MAX_SECONDS:-25}
+      - UI_USERNAME=${UI_USERNAME:-}
+      - UI_PASSWORD=${UI_PASSWORD:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

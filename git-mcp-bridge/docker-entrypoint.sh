@@ -2,34 +2,34 @@
 set -eu
 
 sanitize_env_value() {
-    value="$1"
-    case "$value" in
-        \"*\")
-            value="${value#\"}"
-            value="${value%\"}"
-            ;;
-    esac
-    printf '%s' "$value"
+	value="$1"
+	case "$value" in
+		\"*\")
+			value="${value#\"}"
+			value="${value%\"}"
+			;;
+	esac
+	printf '%s' "$value"
 }
 
 normalize_host() {
-    value="$(sanitize_env_value "$1")"
-    value="${value%/}"
+	value="$(sanitize_env_value "$1")"
+	value="${value%/}"
 
-    case "$value" in
-        */api/v3)
-            value="${value%/api/v3}"
-            ;;
-    esac
+	case "$value" in
+		*/api/v3)
+			value="${value%/api/v3}"
+			;;
+	esac
 
-    printf '%s' "$value"
+	printf '%s' "$value"
 }
 
 host="$(normalize_host "${GITHUB_HOST:-${GITHUB_API_URL:-}}")"
 port="$(sanitize_env_value "${PORT:-9090}")"
 
 if [ -n "$host" ]; then
-    export GITHUB_HOST="$host"
+	export GITHUB_HOST="$host"
 fi
 
 set -- github-mcp-server http --port "$port"
@@ -43,31 +43,31 @@ tools="$(sanitize_env_value "${MCP_TOOLS:-}")"
 exclude_tools="$(sanitize_env_value "${MCP_EXCLUDE_TOOLS:-}")"
 
 if [ -n "$base_url" ]; then
-    set -- "$@" --base-url "$base_url"
+	set -- "$@" --base-url "$base_url"
 fi
 
 if [ -n "$base_path" ]; then
-    set -- "$@" --base-path "$base_path"
+	set -- "$@" --base-path "$base_path"
 fi
 
 if [ "$read_only" = "true" ]; then
-    set -- "$@" --read-only
+	set -- "$@" --read-only
 fi
 
 if [ "$scope_challenge" = "true" ]; then
-    set -- "$@" --scope-challenge
+	set -- "$@" --scope-challenge
 fi
 
 if [ -n "$toolsets" ]; then
-    set -- "$@" --toolsets "$toolsets"
+	set -- "$@" --toolsets "$toolsets"
 fi
 
 if [ -n "$tools" ]; then
-    set -- "$@" --tools "$tools"
+	set -- "$@" --tools "$tools"
 fi
 
 if [ -n "$exclude_tools" ]; then
-    set -- "$@" --exclude-tools "$exclude_tools"
+	set -- "$@" --exclude-tools "$exclude_tools"
 fi
 
 exec "$@"

@@ -2,12 +2,8 @@ version: "3.9"
 
 services:
   git-mcp-bridge:
+    build: .
     container_name: git-mcp-bridge
-    build:
-      context: .
-      args:
-        GITHUB_MCP_REPO: ${GITHUB_MCP_REPO:-https://github.com/github/github-mcp-server.git}
-        GITHUB_MCP_REF: ${GITHUB_MCP_REF:-main}
     env_file:
       - .env
     ports:
@@ -18,9 +14,6 @@ services:
       - GITHUB_API_URL=${GITHUB_API_URL:-}
       - MCP_READ_ONLY=${MCP_READ_ONLY:-false}
       - MCP_SCOPE_CHALLENGE=${MCP_SCOPE_CHALLENGE:-false}
-      - MCP_TOOLSETS=${MCP_TOOLSETS:-}
-      - MCP_TOOLS=${MCP_TOOLS:-}
-      - MCP_EXCLUDE_TOOLS=${MCP_EXCLUDE_TOOLS:-}
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/.well-known/oauth-protected-resource"]
       interval: 30s
