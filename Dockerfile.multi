@@ -1,0 +1,78 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 1 — Build the UI (React/Vite assets)
+# ─────────────────────────────────────────────────────────────────────────────
+FROM node:20-alpine AS ui-build
+
+WORKDIR /app
+COPY ui/package*.json ./ui/
+RUN cd ui && npm ci
+COPY ui/ ./ui/
+RUN mkdir -p ./pkg/github/ui_dist && \
+    cd ui && npm run build
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 2 — Build the Go binary
+# ─────────────────────────────────────────────────────────────────────────────
+FROM golang:1.25.9-alpine AS build
+
+ARG VERSION="dev"
+
+WORKDIR /build
+
+# Install git (needed for ldflags commit hash)
+RUN --mount=type=cache,target=/var/cache/apk \
+    apk add --no-cache git
+
+# Copy all source code
+COPY . .
+
+# Copy built UI assets over the placeholder
+COPY --from=ui-build /app/pkg/github/ui_dist/ ./pkg/github/ui_dist/
+
+# Build the server binary with version info
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build \
+      -ldflags="-s -w \
+        -X main.version=${VERSION} \
+        -X main.commit=$(git rev-parse HEAD 2>/dev/null || echo unknown) \
+        -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      -o /bin/github-mcp-server \
+      ./cmd/github-mcp-server
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 3 — Runtime image
+#
+# Uses Alpine (not distroless) because we need a shell (/bin/sh) to run the
+# multi-process entrypoint that starts all 4 MCP server instances at once.
+# ─────────────────────────────────────────────────────────────────────────────
+FROM alpine:3.20
+
+LABEL io.modelcontextprotocol.server.name="io.github.github/github-mcp-server"
+LABEL org.opencontainers.image.description="GitHub MCP Server — HTTP + SSE, public & private GitHub"
+
+WORKDIR /server
+
+# Copy the server binary from the build stage
+COPY --from=build /bin/github-mcp-server .
+
+# Copy the startup entrypoint
+COPY docker-entrypoint.sh .
+RUN chmod +x /server/docker-entrypoint.sh
+
+# ── Ports ─────────────────────────────────────────────────────────────────────
+# 9050 — Public  GitHub  SSE  transport  (legacy SSE)
+# 9051 — Public  GitHub  HTTP transport  (MCP Streamable HTTP ← recommended)
+# 9052 — Private GitHub  SSE  transport
+# 9053 — Private GitHub  HTTP transport
+EXPOSE 9050 9051 9052 9053
+
+# ── Environment ───────────────────────────────────────────────────────────────
+# Pass these at runtime via -e or --env-file, NOT baked into the image:
+#   GITHUB_PERSONAL_ACCESS_TOKEN  Required. Your GitHub PAT.
+#   PRIVATE_GITHUB_HOST           Optional. Full URL of GitHub Enterprise instance.
+#                                 Example: https://github.mycompany.com
+#                                 Leave unset to run public GitHub servers only.
+# Do NOT set secrets via ENV — pass them at docker run time instead.
+
+ENTRYPOINT ["/server/docker-entrypoint.sh"]

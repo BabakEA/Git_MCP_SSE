@@ -33,7 +33,7 @@ var (
 		Short: "Start stdio server",
 		Long:  `Start a server that communicates via standard input/output streams using JSON-RPC messages.`,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			token := viper.GetString("personal_access_token")
+			token := getGithubToken()
 			if token == "" {
 				return errors.New("GITHUB_PERSONAL_ACCESS_TOKEN not set")
 			}
@@ -103,8 +103,8 @@ var (
 	httpCmd = &cobra.Command{
 		Use:   "http",
 		Short: "Start HTTP server",
-		Long:  `Start an HTTP server that listens for MCP requests over HTTP.`,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Long:  `Start an HTTP server that listens for MCP requests over HTTP. Default port: 9051 (public GitHub), 9053 (custom/private GitHub).`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Parse toolsets (same approach as stdio — see comment there)
 			var enabledToolsets []string
 			if viper.IsSet("toolsets") {
@@ -128,10 +128,11 @@ var (
 			}
 
 			ttl := viper.GetDuration("repo-access-cache-ttl")
+			httpPort, _ := cmd.Flags().GetInt("port")
 			httpConfig := ghhttp.ServerConfig{
 				Version:              version,
 				Host:                 viper.GetString("host"),
-				Port:                 viper.GetInt("port"),
+				Port:                 httpPort,
 				BaseURL:              viper.GetString("base-url"),
 				ResourcePath:         viper.GetString("base-path"),
 				ExportTranslations:   viper.GetBool("export-translations"),
@@ -152,7 +153,81 @@ var (
 			return ghhttp.RunHTTPServer(httpConfig)
 		},
 	}
+
+	// sseCmd: public default port 9050, custom/private GitHub port 9052
+	sseCmd = &cobra.Command{
+		Use:   "sse",
+		Short: "Start SSE server",
+		Long:  `Start a Server-Sent Events (SSE) server. Default port: 9050 (public GitHub), 9052 (custom/private GitHub).`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var enabledToolsets []string
+			if viper.IsSet("toolsets") {
+				if err := viper.UnmarshalKey("toolsets", &enabledToolsets); err != nil {
+					return fmt.Errorf("failed to unmarshal toolsets: %w", err)
+				}
+			}
+			var enabledTools []string
+			if viper.IsSet("tools") {
+				if err := viper.UnmarshalKey("tools", &enabledTools); err != nil {
+					return fmt.Errorf("failed to unmarshal tools: %w", err)
+				}
+			}
+			var excludeTools []string
+			if viper.IsSet("exclude_tools") {
+				if err := viper.UnmarshalKey("exclude_tools", &excludeTools); err != nil {
+					return fmt.Errorf("failed to unmarshal exclude-tools: %w", err)
+				}
+			}
+			ttl := viper.GetDuration("repo-access-cache-ttl")
+			ssePort, _ := cmd.Flags().GetInt("port")
+			sseConfig := ghhttp.ServerConfig{
+				Version:              version,
+				Host:                 viper.GetString("host"),
+				Port:                 ssePort,
+				BaseURL:              viper.GetString("base-url"),
+				ResourcePath:         viper.GetString("base-path"),
+				ExportTranslations:   viper.GetBool("export-translations"),
+				EnableCommandLogging: viper.GetBool("enable-command-logging"),
+				LogFilePath:          viper.GetString("log-file"),
+				ContentWindowSize:    viper.GetInt("content-window-size"),
+				LockdownMode:         viper.GetBool("lockdown-mode"),
+				RepoAccessCacheTTL:   &ttl,
+				ScopeChallenge:       viper.GetBool("scope-challenge"),
+				ReadOnly:             viper.GetBool("read-only"),
+				EnabledToolsets:      enabledToolsets,
+				EnabledTools:         enabledTools,
+				DynamicToolsets:      viper.GetBool("dynamic_toolsets"),
+				ExcludeTools:         excludeTools,
+				InsidersMode:         viper.GetBool("insiders"),
+				SSEMode:              true,
+			}
+			return ghhttp.RunSSEServer(sseConfig)
+		},
+	}
 )
+
+// getGithubToken loads the GitHub token.
+// Priority: $Github_Token -> GITHUB_PERSONAL_ACCESS_TOKEN -> .env file -> viper config.
+func getGithubToken() string {
+	if token := os.Getenv("Github_Token"); token != "" {
+		return token
+	}
+	if token := os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN"); token != "" {
+		return token
+	}
+	if data, err := os.ReadFile(".env"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if after, ok := strings.CutPrefix(line, "Github_Token="); ok {
+				return strings.TrimSpace(after)
+			}
+			if after, ok := strings.CutPrefix(line, "GITHUB_PERSONAL_ACCESS_TOKEN="); ok {
+				return strings.TrimSpace(after)
+			}
+		}
+	}
+	return viper.GetString("personal_access_token")
+}
 
 func init() {
 	cobra.OnInitialize(initConfig)
@@ -176,11 +251,17 @@ func init() {
 	rootCmd.PersistentFlags().Bool("insiders", false, "Enable insiders features")
 	rootCmd.PersistentFlags().Duration("repo-access-cache-ttl", 5*time.Minute, "Override the repo access cache TTL (e.g. 1m, 0s to disable)")
 
-	// HTTP-specific flags
-	httpCmd.Flags().Int("port", 8082, "HTTP server port")
+	// HTTP-specific flags (public default: 9051, custom/private GitHub: 9053)
+	httpCmd.Flags().Int("port", 9051, "HTTP server port (public: 9051, custom/private GitHub: 9053)")
 	httpCmd.Flags().String("base-url", "", "Base URL where this server is publicly accessible (for OAuth resource metadata)")
 	httpCmd.Flags().String("base-path", "", "Externally visible base path for the HTTP server (for OAuth resource metadata)")
 	httpCmd.Flags().Bool("scope-challenge", false, "Enable OAuth scope challenge responses")
+
+	// SSE-specific flags (public default: 9050, custom/private GitHub: 9052)
+	sseCmd.Flags().Int("port", 9050, "SSE server port (public: 9050, custom/private GitHub: 9052)")
+	sseCmd.Flags().String("base-url", "", "Base URL for SSE server")
+	sseCmd.Flags().String("base-path", "", "Base path for SSE server")
+	sseCmd.Flags().Bool("scope-challenge", false, "Enable OAuth scope challenge responses for SSE")
 
 	// Bind flag to viper
 	_ = viper.BindPFlag("toolsets", rootCmd.PersistentFlags().Lookup("toolsets"))
@@ -197,13 +278,17 @@ func init() {
 	_ = viper.BindPFlag("lockdown-mode", rootCmd.PersistentFlags().Lookup("lockdown-mode"))
 	_ = viper.BindPFlag("insiders", rootCmd.PersistentFlags().Lookup("insiders"))
 	_ = viper.BindPFlag("repo-access-cache-ttl", rootCmd.PersistentFlags().Lookup("repo-access-cache-ttl"))
-	_ = viper.BindPFlag("port", httpCmd.Flags().Lookup("port"))
+	// Note: port is read directly from cmd.Flags() in each RunE to avoid viper key collision
 	_ = viper.BindPFlag("base-url", httpCmd.Flags().Lookup("base-url"))
 	_ = viper.BindPFlag("base-path", httpCmd.Flags().Lookup("base-path"))
 	_ = viper.BindPFlag("scope-challenge", httpCmd.Flags().Lookup("scope-challenge"))
+	_ = viper.BindPFlag("base-url", sseCmd.Flags().Lookup("base-url"))
+	_ = viper.BindPFlag("base-path", sseCmd.Flags().Lookup("base-path"))
+	_ = viper.BindPFlag("scope-challenge", sseCmd.Flags().Lookup("scope-challenge"))
 	// Add subcommands
 	rootCmd.AddCommand(stdioCmd)
 	rootCmd.AddCommand(httpCmd)
+	rootCmd.AddCommand(sseCmd)
 }
 
 func initConfig() {

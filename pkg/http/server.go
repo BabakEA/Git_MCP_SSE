@@ -87,6 +87,78 @@ type ServerConfig struct {
 
 	// InsidersMode indicates if we should enable experimental features.
 	InsidersMode bool
+	// SSEMode enables Server-Sent Events mode for the server.
+	SSEMode bool
+}
+// RunSSEServer starts an HTTP server with an /events SSE endpoint.
+func RunSSEServer(cfg ServerConfig) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	var slogHandler slog.Handler
+	var logOutput io.Writer
+	if cfg.LogFilePath != "" {
+		file, err := os.OpenFile(cfg.LogFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+		if err != nil {
+			return fmt.Errorf("failed to open log file: %w", err)
+		}
+		logOutput = file
+		slogHandler = slog.NewTextHandler(logOutput, &slog.HandlerOptions{Level: slog.LevelDebug})
+	} else {
+		logOutput = os.Stderr
+		slogHandler = slog.NewTextHandler(logOutput, &slog.HandlerOptions{Level: slog.LevelInfo})
+	}
+	logger := slog.New(slogHandler)
+	logger.Info("starting SSE server", "version", cfg.Version, "host", cfg.Host, "port", cfg.Port)
+
+	r := chi.NewRouter()
+
+	// Register SSE endpoint
+	r.Get("/events", func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+		// Example: send a welcome event and keep the connection open
+		fmt.Fprintf(w, "event: welcome\ndata: {\"message\":\"SSE server started\"}\n\n")
+		flusher.Flush()
+		// Keep connection open until client disconnects or server shuts down
+		notify := req.Context().Done()
+		<-notify
+	})
+
+	addr := fmt.Sprintf(":%d", cfg.Port)
+	httpSvr := http.Server{
+		Addr:              addr,
+		Handler:           r,
+		ReadHeaderTimeout: 60 * time.Second,
+	}
+
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		logger.Info("shutting down SSE server")
+		if err := httpSvr.Shutdown(shutdownCtx); err != nil {
+			logger.Error("error during server shutdown", "error", err)
+		}
+	}()
+
+	// if cfg.ExportTranslations {
+	//     dumpTranslations()
+	// }
+
+	logger.Info("SSE server listening", "addr", addr)
+	if err := httpSvr.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		return fmt.Errorf("SSE server error: %w", err)
+	}
+
+	logger.Info("SSE server stopped gracefully")
+	return nil
 }
 
 func RunHTTPServer(cfg ServerConfig) error {

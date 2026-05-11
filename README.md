@@ -1572,6 +1572,61 @@ export GITHUB_MCP_SERVER_TITLE="GHES MCP Server"
 
 The exported Go API of this module should currently be considered unstable, and subject to breaking changes. In the future, we may offer stability; please file an issue if there is a use case where this would be valuable.
 
+## Docker Hub — Multi-Server Image
+
+A pre-built image that runs **all four MCP server instances simultaneously** (public + private GitHub Enterprise, HTTP + SSE) is available on Docker Hub:
+
+**[hub.docker.com/r/647326/github-mcp-server](https://hub.docker.com/r/647326/github-mcp-server)**
+
+### Pull
+
+```bash
+docker pull 647326/github-mcp-server:latest
+```
+
+### Run — Public GitHub only (ports 9050 + 9051)
+
+```bash
+docker run -d \
+  --name github-mcp \
+  -e GITHUB_PERSONAL_ACCESS_TOKEN=ghp_your_token_here \
+  -p 9050:9050 \
+  -p 9051:9051 \
+  647326/github-mcp-server:latest
+```
+
+### Run — Public + Private GitHub (all 4 ports)
+
+```bash
+docker run -d \
+  --name github-mcp \
+  -e GITHUB_PERSONAL_ACCESS_TOKEN=ghp_your_token_here \
+  -e PRIVATE_GITHUB_HOST=https://github.mycompany.com \
+  -p 9050:9050 \
+  -p 9051:9051 \
+  -p 9052:9052 \
+  -p 9053:9053 \
+  647326/github-mcp-server:latest
+```
+
+### Port Reference
+
+| Port | Transport | Target | Notes |
+|------|-----------|--------|-------|
+| **9051** | HTTP (Streamable) | Public `github.com` | Recommended for MCP clients |
+| **9050** | SSE (Legacy) | Public `github.com` | |
+| **9053** | HTTP (Streamable) | Private GHE URL | Requires `PRIVATE_GITHUB_HOST` |
+| **9052** | SSE (Legacy) | Private GHE URL | Requires `PRIVATE_GITHUB_HOST` |
+
+### Graceful Shutdown
+
+```bash
+docker stop github-mcp   # sends SIGTERM → cleanly stops all 4 servers
+docker rm github-mcp
+```
+
+See [MCP_SERVER.md](./MCP_SERVER.md) for full documentation including Docker Compose, wire-level handshake examples, and troubleshooting.
+
 ## License
 
 This project is licensed under the terms of the MIT open source license. Please refer to [MIT](./LICENSE) for the full terms.
